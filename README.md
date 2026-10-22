@@ -10,9 +10,9 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 > **Live demo:** _coming soon_ <!-- https://<your-app>.vercel.app -->
-> **API:** _coming soon_ <!-- https://<hf-user>-<space-name>.hf.space/docs -->
+> **API:** _coming soon_ <!-- https://<your-service>.onrender.com/docs -->
 >
-> The demo backend runs on a free Hugging Face Space that sleeps when idle. The first request can take up to a minute while it wakes up; the app shows a banner while this happens.
+> The demo backend runs on Render's free plan, which sleeps after 15 minutes without traffic. The first request after that can take up to a minute while it wakes up; the app shows a banner while this happens.
 
 ---
 
@@ -33,23 +33,26 @@
 - **Role-based retrieval.** Each role has its own FAISS index, so an employee cannot retrieve HR or manager documents. Admins search a combined index.
 - **Grounded answers.** A strict prompt tells the LLM to answer only from the retrieved context. If the answer isn't there, it replies with a fixed "I don't have information about this…" message.
 - **Choice of LLM provider.** Use [Groq](https://groq.com/) (hosted, default: `openai/gpt-oss-20b`) or a local [LM Studio](https://lmstudio.ai/) server. Switch with one environment variable; both use the OpenAI chat-completions format.
+- **Lightweight embeddings.** `all-MiniLM-L6-v2` runs on [fastembed](https://github.com/qdrant/fastembed) (ONNX Runtime) instead of PyTorch. The vectors are identical, and the whole API runs in about 220 MiB of RAM.
 - **Source citations.** Every answer lists its source chunks (file name, page, snippet, similarity), with **View** and **Download** links to the original document.
-- **Real confidence scores.** Confidence is the mean cosine similarity between the question and the retrieved chunks, taken from FAISS distances. An on-topic question scores about 0.6–0.8; an off-topic one about 0.1.
+- **Real confidence scores.** Confidence is the mean cosine similarity between the question and the retrieved chunks, taken from FAISS distances. On-topic questions score about 0.5–0.7; off-topic ones about 0.05–0.12.
 - **Secure authentication.** JWTs (HS256, 24-hour expiry) are signed with a secret from the environment. Passwords are hashed with bcrypt. Logout revokes the token through a SQLite blacklist.
 - **Feedback, suggestions and analytics.** Users rate answers 👍/👎, get three role-aware follow-up questions, and can open a Recharts dashboard. It shows answer rate, confidence distribution, top questions and latency.
 - **Streaming endpoint.** `POST /ask-stream` sends sources, confidence and answer tokens as Server-Sent Events with either provider.
-- **Deployable.** The Docker image for a Hugging Face Space builds the FAISS indexes into the image. The React frontend deploys to Vercel and shows a "waking up the server" banner while the Space starts.
+- **Deployable on free tiers.**
+  - **Backend:** a Docker image for Render that ships with the embedding model and FAISS indexes already built in. A `render.yaml` Blueprint sets it up.
+  - **Frontend:** the React app deploys to Vercel and shows a "waking up the server" banner while the backend starts.
 - **Chat UI extras.** Role-specific quick questions, voice input (Web Speech API), chat export to `.txt` and a clear-chat button.
 
 ---
 
 ## How it works
 
-1. **Ingestion (offline / at Docker build).** `ingest_documents.py` loads the PDFs in `data/<role>/` and splits them into 600-character chunks with 150 characters of overlap. It embeds the chunks with `sentence-transformers/all-MiniLM-L6-v2` and saves one FAISS index per role, plus a combined index for admins.
+1. **Ingestion (offline / at Docker build).** `ingest_documents.py` loads the PDFs in `data/<role>/` and splits them into 600-character chunks with 150 characters of overlap. It embeds the chunks with `all-MiniLM-L6-v2` via fastembed and saves one FAISS index per role, plus a combined index for admins.
 2. **Login.** The user signs in with a username, password and role. The backend checks the bcrypt hash in SQLite and returns a JWT that carries the user's `role`.
-3. **Retrieval.** On `POST /ask`, the backend reads the role from the token and searches that role's FAISS index for the top 3 chunks, with their distances.
+3. **Retrieval.** On `POST /ask`, the backend reads the role from the token. It embeds the question with the same fastembed model and searches that role's FAISS index for the top 3 chunks, with their distances.
 4. **Confidence.** The embeddings are unit-length and FAISS returns squared L2 distance *d²*. So each chunk's cosine similarity is *1 − d²/2*. The answer's confidence is the mean over the retrieved chunks.
-5. **Generation.** The chunks are placed in a strict "context-only" prompt and sent to the configured LLM provider: Groq or LM Studio, at temperature 0.1 with a 500-token limit.
+5. **Generation.** The chunks are placed in a strict "context-only" prompt and sent to the configured LLM provider: Groq or LM Studio, at temperature 0.1 with a 500-token limit. For gpt-oss reasoning models, `reasoning_effort` is set to `low`.
 6. **Response.** The API returns the answer with its sources, confidence and timings. It logs the exchange to SQLite and returns a `query_id` that the UI uses for feedback.
 
 ### Architecture
@@ -62,7 +65,7 @@ flowchart LR
         API["REST API<br/>app.py"]
         AUTH["JWT auth + RBAC<br/>auth.py · bcrypt"]
         RAG["RAG engine<br/>rag_engine.py"]
-        EMB["sentence-transformers<br/>all-MiniLM-L6-v2"]
+        EMB["fastembed (ONNX Runtime)<br/>all-MiniLM-L6-v2"]
     end
 
     subgraph Stores["Role-scoped FAISS vectorstores"]
@@ -117,11 +120,11 @@ sequenceDiagram
         A-->>U: 401 Unauthorized
     end
     A->>R: ask_question_with_role(question, role)
-    R->>F: similarity_search_with_score(question, k = 3) on vectorstore/{role}
+    R->>F: embed question (fastembed), similarity_search_with_score(k = 3) on vectorstore/{role}
     F-->>R: 3 chunks + squared L2 distances
     R->>R: confidence = mean(1 − d²/2), build strict context-only prompt
     R->>L: POST /chat/completions (temperature 0.1, max_tokens 500)
-    alt GROQ_API_KEY missing, LLM unreachable or rate-limited
+    alt key missing, model retired, LLM unreachable or rate-limited
         L-->>R: error
         R-->>A: clear error message as the answer
     else success
@@ -152,7 +155,7 @@ flowchart LR
 
     LOAD["PyPDFLoader<br/>one Document per page"]
     SPLIT["RecursiveCharacterTextSplitter<br/>chunk 600 · overlap 150"]
-    EMBED["all-MiniLM-L6-v2<br/>unit-length embeddings"]
+    EMBED["fastembed · all-MiniLM-L6-v2<br/>unit-length embeddings"]
 
     DE & DH & DM --> LOAD --> SPLIT --> EMBED
     EMBED -->|"per-role pass"| VE[("vectorstore/employee")]
@@ -169,13 +172,13 @@ flowchart LR
 |---|---|
 | Frontend | React 19, Vite 8, Tailwind CSS 3, React Router 7, Zustand, Axios, Recharts, react-hot-toast |
 | Backend | FastAPI, Uvicorn, Pydantic, python-dotenv |
-| RAG pipeline | LangChain (`langchain-community`, `langchain-huggingface`, `langchain-text-splitters`), PyPDFLoader / pypdf |
-| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` (CPU PyTorch) |
+| RAG pipeline | LangChain (`langchain-community`, `langchain-text-splitters`), PyPDFLoader / pypdf |
+| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` via fastembed (ONNX Runtime, no PyTorch) |
 | Vector store | FAISS (`faiss-cpu`), one index per role plus a combined index |
 | LLM | Groq (`openai/gpt-oss-20b` by default) or LM Studio (local, e.g. Mistral-7B-Instruct) |
 | Auth | PyJWT (HS256), passlib + bcrypt, SQLite token blacklist |
 | Storage | SQLite (users, chat history, query logs, feedback) |
-| Hosting | Hugging Face Spaces (Docker) for the API, Vercel for the frontend |
+| Hosting | Render (Docker web service) for the API, Vercel for the frontend |
 
 ---
 
@@ -210,7 +213,8 @@ Roles also control access to the API:
 enterprise-rag-assistant/
 ├── backend/
 │   ├── app.py               # FastAPI app: routes, CORS, auth dependency, static /documents mount
-│   ├── config.py            # Loads backend/.env; paths, LLM provider, CORS, JWT secret
+│   ├── config.py            # Loads backend/.env; paths, LLM provider, CORS, JWT secret, embedding cache
+│   ├── embeddings.py        # fastembed all-MiniLM-L6-v2, shared by ingestion and querying
 │   ├── auth.py              # JWT issue/verify, login, password change, token blacklist
 │   ├── security.py          # bcrypt password hashing (passlib)
 │   ├── rag_engine.py        # Role-based retrieval, confidence, Groq/LM Studio client, streaming, suggestions
@@ -228,11 +232,10 @@ enterprise-rag-assistant/
 │   ├── vercel.json          # SPA rewrite so deep links like /login work on refresh
 │   └── .env.example
 ├── data/                    # Policy documents, one folder per role
-├── scripts/
-│   └── deploy_hf_space.ps1  # Publishes the backend to a Hugging Face Space
 ├── vectorstore/             # Generated by ingest_documents.py (git-ignored)
 ├── docs/                    # Detailed guides + screenshots/
-├── Dockerfile               # Backend image (Hugging Face Space, port 7860)
+├── Dockerfile               # Backend image for Render (listens on $PORT, default 10000)
+├── render.yaml              # Render Blueprint: free Docker web service
 ├── .dockerignore
 ├── requirements.txt
 └── LICENSE
@@ -275,8 +278,6 @@ cd enterprise-rag-assistant
 
 python3 -m venv .venv
 source .venv/bin/activate
-# Optional on Linux without a GPU: avoids downloading the large CUDA build of PyTorch
-# pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 
 cp backend/.env.example backend/.env
@@ -298,7 +299,7 @@ If `GROQ_API_KEY` is missing, the API still starts. Chat answers then explain th
 python backend/ingest_documents.py
 ```
 
-Paths are resolved relative to the code, so this works from any directory. The first run downloads the embedding model from Hugging Face. Re-run it, then restart the API, whenever you change the documents in `data/`.
+Paths are resolved relative to the code, so this works from any directory. The first run downloads the ONNX embedding model (about 90 MB) into `.fastembed_cache/`. Re-run it, then restart the API, whenever you change the documents in `data/`.
 
 ### 4. Run the API
 
@@ -323,19 +324,19 @@ Open **http://localhost:5173** and sign in with a [demo login](#demo-logins). Th
 
 ```bash
 docker build -t enterprise-rag-backend .
-docker run --rm -p 7860:7860 \
+docker run --rm -p 10000:10000 --memory=512m \
   -e GROQ_API_KEY=your-key -e JWT_SECRET=some-long-random-string \
   -e CORS_ORIGINS=http://localhost:5173 \
   enterprise-rag-backend
 ```
 
-Then start the frontend with `VITE_API_URL=http://127.0.0.1:7860`.
+Then start the frontend with `VITE_API_URL=http://127.0.0.1:10000`.
 
 ---
 
 ## Environment variables
 
-### Backend: `backend/.env` locally, Space **secrets/variables** when deployed
+### Backend: `backend/.env` locally, Render **Environment** settings when deployed
 
 Real environment variables take precedence over `backend/.env`.
 
@@ -343,12 +344,14 @@ Real environment variables take precedence over `backend/.env`.
 |---|---|---|---|
 | `LLM_PROVIDER` | `groq` | | `groq` (hosted) or `lmstudio` (local) |
 | `GROQ_API_KEY` | none | with Groq | Groq API key. **Keep secret.** |
-| `LLM_MODEL` | `openai/gpt-oss-20b` (groq) / `mistral-7b-instruct-v0.2@q4_0` (lmstudio) | | Model name sent to the provider |
+| `LLM_MODEL` | `openai/gpt-oss-20b` (groq) / `mistral-7b-instruct-v0.2@q4_0` (lmstudio) | | Model name sent to the provider. If the model is retired or unknown, answers tell you to change this. |
 | `LM_STUDIO_URL` | `http://127.0.0.1:1234/v1/chat/completions` | | LM Studio endpoint (only with `lmstudio`) |
 | `JWT_SECRET` | random per process in dev | in production | Signs login tokens. Without it, the app refuses to start in production; in dev, logins reset on every restart. **Keep secret.** |
 | `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | | Comma-separated frontend origins allowed to call the API |
-| `APP_ENV` | none (`production` in the Docker image) | | `production` makes a missing `JWT_SECRET` a startup error. Also implied on Hugging Face Spaces. |
+| `APP_ENV` | none (`production` in the Docker image) | | `production` makes a missing `JWT_SECRET` a startup error. Also implied on Render, which sets `RENDER=true`. |
 | `DB_PATH` | `backend/enterprise_rag.db` | | SQLite file location |
+| `FASTEMBED_CACHE_PATH` | `.fastembed_cache/` in the repo root | | Where the embedding model is cached (pre-filled inside the Docker image) |
+| `PORT` | `10000` | | Port the Docker image listens on. Render sets it automatically. |
 
 ### Frontend: `frontend-react/.env` locally, Vercel **Environment Variables** when deployed
 
@@ -362,7 +365,7 @@ Retrieval and generation settings (`RETRIEVAL_K = 3`, `TEMPERATURE = 0.1`, `MAX_
 
 ## Deployment
 
-The API runs on a **Hugging Face Space** (Docker SDK, free CPU tier) and the React app on **Vercel**. The Space calls **Groq** for generation.
+The API runs as a **Render** free web service (Docker) and the React app on **Vercel**. The API calls **Groq** for generation.
 
 ```mermaid
 flowchart LR
@@ -370,10 +373,10 @@ flowchart LR
     subgraph Vercel
         FE["React SPA<br/>static build of frontend-react/"]
     end
-    subgraph HF["Hugging Face Space (Docker, port 7860)"]
+    subgraph Render["Render free web service (Docker, $PORT = 10000)"]
         API["FastAPI + Uvicorn"]
         IDX[("FAISS indexes<br/>built into the image")]
-        EMB["all-MiniLM-L6-v2<br/>cached in the image"]
+        EMB["fastembed model<br/>cached in the image"]
         SQL[("SQLite<br/>seeded on startup")]
     end
     GROQ["Groq API<br/>openai/gpt-oss-20b"]
@@ -386,36 +389,37 @@ flowchart LR
     API -->|"chat completions<br/>(GROQ_API_KEY)"| GROQ
 ```
 
-### 1. Backend → Hugging Face Space
+### 1. Backend → Render
 
-1. On [huggingface.co/new-space](https://huggingface.co/new-space), create a **public** Space with SDK **Docker** (Blank template) and the free **CPU basic** hardware.
-2. In the Space's **Settings → Variables and secrets**, add:
-   - **Secret** `GROQ_API_KEY`: your Groq key
-   - **Secret** `JWT_SECRET`: a long random string, e.g. `python -c "import secrets; print(secrets.token_urlsafe(48))"`
-   - **Variable** `CORS_ORIGINS`: your Vercel URL, e.g. `https://your-app.vercel.app` (add more, comma-separated, if needed)
-3. Create a Hugging Face [access token](https://huggingface.co/settings/tokens) with **write** permission. Git LFS must be installed (`git lfs version`).
-4. From the repo root, push the backend:
+1. Sign in to [Render](https://render.com) with GitHub and choose **New → Blueprint**. Select this repository; Render reads `render.yaml`, which describes a free Docker web service with health check `/health`.
+2. When prompted, fill in the values marked `sync: false`:
+   - `GROQ_API_KEY`: your Groq key
+   - `JWT_SECRET`: a long random string, e.g. `python -c "import secrets; print(secrets.token_urlsafe(48))"`
+   - `CORS_ORIGINS`: your Vercel URL, e.g. `https://your-app.vercel.app`. If you don't know it yet, use `http://localhost:5173` for now and update it in step 2.5.
 
-   ```powershell
-   .\scripts\deploy_hf_space.ps1 -RemoteUrl https://huggingface.co/spaces/<hf-user>/<space-name>
-   ```
+   `LLM_MODEL` is preset to `openai/gpt-oss-20b`.
+3. Click **Apply**. The first build takes several minutes: it installs dependencies, downloads the embedding model and builds the FAISS indexes into the image.
+4. Open `https://<your-service>.onrender.com/health`. It should return `{"status": "healthy", …}`.
 
-   When git asks for credentials, use your HF username and the token as the password. The script stages only `Dockerfile`, `.dockerignore`, `backend/`, `data/` and `requirements.txt`. It never includes `backend/.env` or `*.db` files. It adds a generated README with the Space's YAML front matter, then force-pushes. Use `-DryRun` to inspect the staged folder without pushing.
-5. Wait for the build in the Space's **Logs** tab. The first build takes several minutes. Then check `https://<hf-user>-<space-name>.hf.space/health`.
+Prefer not to use a Blueprint? Create **New → Web Service** from the repo with runtime **Docker**, plan **Free**, health check path `/health`, and the same environment variables.
 
 ### 2. Frontend → Vercel
 
 1. Import the GitHub repo at [vercel.com/new](https://vercel.com/new).
 2. Set **Root Directory** to `frontend-react`. Vercel detects Vite, so the build command `npm run build` and output folder `dist` are set automatically.
-3. Add the environment variable `VITE_API_URL=https://<hf-user>-<space-name>.hf.space`. Use the direct `.hf.space` URL, not the `huggingface.co/spaces/...` page, and no trailing slash.
+3. Add the environment variable `VITE_API_URL=https://<your-service>.onrender.com` (no trailing slash).
 4. Deploy. `vercel.json` rewrites all routes to `index.html`, so `/login` works on refresh.
-5. If the Vercel URL differs from what you put in `CORS_ORIGINS`, update that variable on the Space; the Space restarts.
+5. In Render, open the service's **Environment** tab and set `CORS_ORIGINS` to your Vercel URL. Saving redeploys the service.
 
 ### Good to know
 
-- **Cold starts:** free Spaces sleep after a period of inactivity. The frontend pings `/health` on load and shows *"Waking up the server, this can take up to a minute"* until the API answers.
-- **Ephemeral storage:** the Space's SQLite database resets whenever the Space restarts or is rebuilt. Demo users are re-seeded automatically; chat history and analytics start fresh.
-- **Updating:** re-run the deploy script after backend or document changes. Vercel redeploys the frontend on every push to GitHub.
+- **Resource use (measured locally with `docker run --memory=512m`):**
+  - **Memory:** about 220 MiB at peak while serving all four roles, including concurrent requests.
+  - **Image size:** about 1.15 GB.
+  - **Startup:** about 4 s on a normal CPU and about 40–45 s when throttled to Render's 0.1 CPU.
+- **Cold starts:** free services spin down after 15 minutes without traffic. The frontend pings `/health` on load and shows *"Waking up the server, this can take up to a minute"* until the API answers.
+- **Ephemeral storage:** Render's free plan has no persistent disk. The SQLite database resets on every deploy, restart and spin-down. Demo users are re-seeded automatically; chat history and analytics start fresh.
+- **Updating:** pushing to `main` redeploys the backend (`autoDeploy: true`) and the frontend.
 
 ---
 
@@ -483,7 +487,7 @@ These accounts are seeded into SQLite on startup. Select the matching role on th
 | Use `/ask-stream` in the React UI | The streaming endpoint works with both providers, but the UI currently calls `/ask` |
 | Ingest `.docx` files | `payroll-policy.docx` is listed for HR but not yet searchable |
 | Authenticate document downloads | The `/documents` static mount is not protected by JWT |
-| Persistent storage for the hosted demo | SQLite on a free Space resets on restart; a managed database or Space persistent storage would keep history |
+| Persistent storage for the hosted demo | SQLite on Render's free plan resets on every restart; a managed database would keep history |
 | Skip the LLM call for very low-similarity questions | The confidence score already detects off-topic questions; skipping the call would save tokens |
 | Admin user-management screen | The `/admin/*` endpoints exist but have no UI yet |
 | Automated test suite (pytest + CI) | Testing is currently manual; see [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) |
@@ -500,7 +504,7 @@ These accounts are seeded into SQLite on startup. Select the matching role on th
 | [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) | Manual test checklist and cURL examples |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Original phased implementation plan |
 
-> These guides were written during earlier development phases (when the project used LM Studio only). Where they disagree with this README, the README matches the current code.
+> These guides were written during earlier development phases, when the project used LM Studio and sentence-transformers. Where they disagree with this README, the README matches the current code.
 
 ---
 

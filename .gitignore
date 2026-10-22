@@ -38,3 +38,6 @@ build/
 
 # Node / frontend
 node_modules/
+
+# fastembed model cache (downloaded on first run)
+.fastembed_cache/

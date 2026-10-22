@@ -3,7 +3,7 @@ import { create } from "zustand";
 import toast from "react-hot-toast";
 import { API_BASE } from "../api/config";
 
-// The hosted backend (Hugging Face Space) sleeps when idle and takes up to a minute to
+// The hosted backend (Render free plan) sleeps when idle and takes up to a minute to
 // start again. We ping /health and show a banner while it wakes instead of failing silently.
 const SLOW_AFTER_MS = 2500;
 const RETRY_EVERY_MS = 5000;

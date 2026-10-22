@@ -4,10 +4,10 @@ import os
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
 from config import DATA_DIR, VECTOR_DIR
+from embeddings import get_embeddings
 
 
 DATA_PATH = DATA_DIR
@@ -55,20 +55,9 @@ def split_documents(documents):
     return splitter.split_documents(documents)
 
 
-def create_vectorstore(chunks, path: str):
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
-    db = FAISS.from_documents(chunks, embeddings)
-    os.makedirs(path, exist_ok=True)
-    db.save_local(path)
-    print(f"  Saved at: {path}")
-
-
 if __name__ == "__main__":
-    embeddings_model = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    # Downloads the ONNX model into EMBEDDING_CACHE_DIR on first use
+    embeddings_model = get_embeddings()
 
     # Create one vectorstore per role so each role can only search its own documents
     for role in ROLES:

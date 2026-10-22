@@ -5,18 +5,17 @@ import time
 from typing import List, Dict, Tuple
 import requests
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
 from datetime import datetime
 
 from config import (
     LLM_PROVIDER, LLM_MODEL, GROQ_API_URL, GROQ_API_KEY, LM_STUDIO_URL, VECTOR_DIR,
 )
+from embeddings import get_embeddings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ==================== CONFIGURATION ====================
-EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 RETRIEVAL_K = 3
 TEMPERATURE = 0.1
 MAX_TOKENS = 500
@@ -27,8 +26,8 @@ NO_INDEX_ANSWER = "The document index has not been built yet. Please run ingest_
 
 logger.info(f"LLM provider: {LLM_PROVIDER} | model: {LLM_MODEL}")
 
-# Load embedding model
-embedding_model = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
+# Load embedding model (fastembed / ONNX, same model used at ingestion)
+embedding_model = get_embeddings()
 
 _store_cache: Dict[str, FAISS] = {}
 
@@ -64,7 +63,7 @@ def _llm_endpoint() -> Tuple[str, Dict[str, str]]:
         if not GROQ_API_KEY:
             raise LLMError(
                 "The AI model is not configured: GROQ_API_KEY is missing. "
-                "Set it in backend/.env (local) or as a Hugging Face Space secret (deployment).",
+                "Set it in backend/.env (local) or as a Render environment variable (deployment).",
                 "LLM_NOT_CONFIGURED",
             )
         return GROQ_API_URL, {"Authorization": f"Bearer {GROQ_API_KEY}"}
@@ -101,7 +100,7 @@ def _http_error_message(resp: requests.Response) -> str:
         hint = ("a model listed at https://console.groq.com/docs/models"
                 if LLM_PROVIDER == "groq" else "the identifier of the model loaded in LM Studio")
         return (f"Model '{LLM_MODEL}' is not available from the AI provider (not found or retired). "
-                f"Set LLM_MODEL in backend/.env (or as a Space variable) to {hint}.")
+                f"Set LLM_MODEL in backend/.env (or as a Render environment variable) to {hint}.")
     if status == 429:
         return "The AI model is rate-limited right now. Please wait a moment and try again."
     return f"The AI model returned an error (HTTP {status}). Please try again."

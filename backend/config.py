@@ -12,11 +12,16 @@ PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 VECTOR_DIR = os.path.join(PROJECT_ROOT, "vectorstore")
 
-# Real environment variables (e.g. Hugging Face Space secrets) take precedence over backend/.env
+# Real environment variables (e.g. Render environment variables) take precedence over backend/.env
 load_dotenv(os.path.join(BACKEND_DIR, ".env"))
 
-# "production" when APP_ENV says so, or when running inside a Hugging Face Space
-IS_PRODUCTION = os.getenv("APP_ENV", "").lower() == "production" or bool(os.getenv("SPACE_ID"))
+# "production" when APP_ENV says so, or when running on Render (which sets RENDER=true)
+IS_PRODUCTION = os.getenv("APP_ENV", "").lower() == "production" or bool(os.getenv("RENDER"))
+
+# ==================== EMBEDDINGS ====================
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+# Where fastembed keeps the ONNX model. Kept short on purpose: Windows paths are limited to 260 chars.
+EMBEDDING_CACHE_DIR = os.getenv("FASTEMBED_CACHE_PATH", "").strip() or os.path.join(PROJECT_ROOT, ".fastembed_cache")
 
 # ==================== LLM ====================
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").strip().lower()
@@ -47,7 +52,7 @@ def get_jwt_secret() -> str:
         return secret
     if IS_PRODUCTION:
         raise RuntimeError(
-            "JWT_SECRET is not set. Add it as an environment variable / Space secret before starting the app."
+            "JWT_SECRET is not set. Add it as an environment variable (e.g. in the Render dashboard) before starting the app."
         )
     logger.warning(
         "JWT_SECRET is not set; using a random development secret. "

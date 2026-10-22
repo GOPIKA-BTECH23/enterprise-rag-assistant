@@ -8,8 +8,8 @@ node_modules
 **/node_modules
 frontend-react
 docs
-scripts
 vectorstore
+.fastembed_cache
 .env
 **/.env
 *.db
