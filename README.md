@@ -12,7 +12,7 @@
 ## Try it now
 
 **Live demo:** [enterprise-rag-assistant-silk.vercel.app](https://enterprise-rag-assistant-silk.vercel.app)
-**API docs:** [enterprise-rag-assistant-d172.onrender.com/docs](https://enterprise-rag-assistant-d172.onrender.com/docs)
+**API docs:** [enterprise-rag-assistant-dl72.onrender.com/docs](https://enterprise-rag-assistant-dl72.onrender.com/docs)
 
 Sign in with one of the demo accounts and pick the matching role on the login screen. Each role sees a different set of documents.
 
@@ -427,7 +427,7 @@ Pushing to `main` redeploys both the backend (`autoDeploy: true`) and the fronte
 
 ## API overview
 
-All endpoints except `/`, `/health` and `/login` require `Authorization: Bearer <token>`. Try them in the [live API docs](https://enterprise-rag-assistant-d172.onrender.com/docs); full request and response examples are in [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md).
+All endpoints except `/`, `/health` and `/login` require `Authorization: Bearer <token>`. Try them in the [live API docs](https://enterprise-rag-assistant-dl72.onrender.com/docs); full request and response examples are in [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md).
 
 | Method | Endpoint | Access | Description |
 |---|---|---|---|
@@ -455,7 +455,7 @@ All endpoints except `/`, `/health` and `/login` require `Authorization: Bearer 
 **Example**
 
 ```bash
-API=https://enterprise-rag-assistant-d172.onrender.com   # or http://127.0.0.1:8000 locally
+API=https://enterprise-rag-assistant-dl72.onrender.com   # or http://127.0.0.1:8000 locally
 TOKEN=$(curl -s -X POST $API/login \
   -H "Content-Type: application/json" \
   -d '{"username":"john","password":"password123","role":"employee"}' | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
