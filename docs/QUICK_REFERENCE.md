@@ -86,7 +86,7 @@ enterprise-rag-chatbot/
    Calls: ask_question(question)
    
 4️⃣ VECTORIZATION (rag_engine.py)
-   Model: sentence-transformers/all-MiniLM-L6-v2
+   Model: sentence-transformers/all-MiniLM-L6-v2 (fastembed, ONNX Runtime)
    Input: "What is the vacation policy?" (text)
    Output: [0.123, -0.456, 0.789, ..., 0.234] (384-dim vector)
    
@@ -283,9 +283,8 @@ fastapi==0.104.1
 uvicorn==0.24.0
 langchain==0.1.0
 langchain-community==0.0.1
-langchain-huggingface==0.0.1
 faiss-cpu==1.7.4
-sentence-transformers==2.2.2
+fastembed>=0.9.0
 requests==2.31.0
 python-dotenv==1.0.0
 pydantic==2.5.0
@@ -362,11 +361,9 @@ curl http://127.0.0.1:8000/
 ```python
 # backend/test_retrieval.py
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
+from embeddings import get_embeddings  # fastembed all-MiniLM-L6-v2 (ONNX)
 
-embedding_model = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
+embedding_model = get_embeddings()
 
 vector_db = FAISS.load_local("../vectorstore", embedding_model)
 retriever = vector_db.as_retriever(search_kwargs={"k": 3})

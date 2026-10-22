@@ -5,7 +5,7 @@ This document provides a comprehensive workflow overview of the Enterprise RAG C
 
 **System Type:** Retrieval-Augmented Generation (RAG) with Local LLM Integration  
 **Current Version:** 1.0 (MVP)  
-**Tech Stack:** FastAPI, LangChain, FAISS, Sentence Transformers, LM Studio (Mistral 7B)
+**Tech Stack:** FastAPI, LangChain, FAISS, fastembed (ONNX), Groq / LM Studio
 
 ---
 
@@ -50,7 +50,7 @@ This document provides a comprehensive workflow overview of the Enterprise RAG C
 │  ┌─────────────────────────────────────────────────────────┐  │
 │  │  VECTOR DATABASE LAYER (FAISS)                         │  │
 │  │  ├─ Vector Store (index.faiss)                         │  │
-│  │  ├─ Embedding Model: sentence-transformers/MiniLM     │  │
+│  │  ├─ Embedding Model: MiniLM-L6-v2 (fastembed)         │  │
 │  │  └─ Retrieval: Top-K Semantic Search (k=3)            │  │
 │  └─────────────────────────────────────────────────────────┘  │
 │           ↓                                                    │
@@ -59,7 +59,7 @@ This document provides a comprehensive workflow overview of the Enterprise RAG C
 │  │  ├─ Raw Documents: /data/[role]/*.pdf                  │  │
 │  │  ├─ PDF Loader (PyPDFLoader)                           │  │
 │  │  ├─ Text Splitter (Recursive, 600 chunk, 150 overlap)  │  │
-│  │  └─ Embedding Generator (HuggingFace)                  │  │
+│  │  └─ Embedding Generator (fastembed, ONNX)              │  │
 │  └─────────────────────────────────────────────────────────┘  │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
@@ -196,7 +196,7 @@ PDF Files (data/employee/, data/hr/, data/manager/)
     ┌───────────────────┐
     │ Embedding         │ - Convert to vectors
     │ Generation        │ - Dimension: 384
-    │ (HuggingFace)     │ - Model: MiniLM-L6-v2
+    │ (fastembed/ONNX)  │ - Model: MiniLM-L6-v2
     └───────────────────┘
             ↓
     ┌───────────────────┐
@@ -803,9 +803,8 @@ fastapi==0.104.1
 uvicorn==0.24.0
 langchain==0.1.0
 langchain-community==0.0.1
-langchain-huggingface==0.0.1
 faiss-cpu==1.7.4  # Or faiss-gpu for CUDA
-sentence-transformers==2.2.2
+fastembed>=0.9.0
 requests==2.31.0
 python-dotenv==1.0.0
 pydantic==2.5.0

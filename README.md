@@ -9,22 +9,21 @@
 ![Groq](https://img.shields.io/badge/LLM-Groq%20%7C%20LM%20Studio-F55036)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-> **Live demo:** _coming soon_ <!-- https://<your-app>.vercel.app -->
-> **API:** _coming soon_ <!-- https://<your-service>.onrender.com/docs -->
->
-> The demo backend runs on Render's free plan, which sleeps after 15 minutes without traffic. The first request after that can take up to a minute while it wakes up; the app shows a banner while this happens.
+## Try it now
 
----
+**Live demo:** [enterprise-rag-assistant-silk.vercel.app](https://enterprise-rag-assistant-silk.vercel.app)
+**API docs:** [enterprise-rag-assistant-d172.onrender.com/docs](https://enterprise-rag-assistant-d172.onrender.com/docs)
 
-## Screenshots
+Sign in with one of the demo accounts and pick the matching role on the login screen. Each role sees a different set of documents.
 
-<!-- Save screenshots in docs/screenshots/ with these filenames -->
+| Username | Password | Role to pick on the login screen |
+|---|---|---|
+| `john` | `password123` | Employee (`employee`) |
+| `alice` | `password123` | HR Manager (`hr`) |
+| `bob` | `password123` | Department Manager (`manager`) |
+| `admin` | `admin123` | Administrator (`admin`) |
 
-| Login | Chat with citations |
-|---|---|
-| ![Login page](docs/screenshots/login.png) | ![Chat answer with sources and confidence](docs/screenshots/chat.png) |
-| **Documents** | **Metrics dashboard** |
-| ![Role-scoped document list](docs/screenshots/documents.png) | ![Evaluation metrics and analytics](docs/screenshots/metrics.png) |
+> The backend runs on Render's free tier. If it has been idle, the first request can take around a minute while it wakes up; the app shows a banner until it's ready. These are public demo credentials, so don't enter anything sensitive.
 
 ---
 
@@ -32,27 +31,30 @@
 
 - **Role-based retrieval.** Each role has its own FAISS index, so an employee cannot retrieve HR or manager documents. Admins search a combined index.
 - **Grounded answers.** A strict prompt tells the LLM to answer only from the retrieved context. If the answer isn't there, it replies with a fixed "I don't have information about this…" message.
-- **Choice of LLM provider.** Use [Groq](https://groq.com/) (hosted, default: `openai/gpt-oss-20b`) or a local [LM Studio](https://lmstudio.ai/) server. Switch with one environment variable; both use the OpenAI chat-completions format.
-- **Lightweight embeddings.** `all-MiniLM-L6-v2` runs on [fastembed](https://github.com/qdrant/fastembed) (ONNX Runtime) instead of PyTorch. The vectors are identical, and the whole API runs in about 220 MiB of RAM.
 - **Source citations.** Every answer lists its source chunks (file name, page, snippet, similarity), with **View** and **Download** links to the original document.
-- **Real confidence scores.** Confidence is the mean cosine similarity between the question and the retrieved chunks, taken from FAISS distances. On-topic questions score about 0.5–0.7; off-topic ones about 0.05–0.12.
-- **Secure authentication.** JWTs (HS256, 24-hour expiry) are signed with a secret from the environment. Passwords are hashed with bcrypt. Logout revokes the token through a SQLite blacklist.
+- **Real confidence scores.** Confidence is the mean cosine similarity between the question and the retrieved chunks. On-topic questions score about 0.5–0.7; off-topic ones about 0.05–0.12.
+- **Choice of LLM provider.** [Groq](https://groq.com/) (hosted, default model `openai/gpt-oss-20b`) or a local [LM Studio](https://lmstudio.ai/) server, switched with one environment variable.
 - **Feedback, suggestions and analytics.** Users rate answers 👍/👎, get three role-aware follow-up questions, and can open a Recharts dashboard. It shows answer rate, confidence distribution, top questions and latency.
 - **Streaming endpoint.** `POST /ask-stream` sends sources, confidence and answer tokens as Server-Sent Events with either provider.
-- **Deployable on free tiers.**
-  - **Backend:** a Docker image for Render that ships with the embedding model and FAISS indexes already built in. A `render.yaml` Blueprint sets it up.
-  - **Frontend:** the React app deploys to Vercel and shows a "waking up the server" banner while the backend starts.
 - **Chat UI extras.** Role-specific quick questions, voice input (Web Speech API), chat export to `.txt` and a clear-chat button.
+
+## Key engineering decisions
+
+- **Role-isolated FAISS indexes.** Access control happens at retrieval time, not in the prompt. Each role has its own index, so documents a user may not see are never retrieved and can't leak into an answer. Admins use a combined index.
+- **Similarity-based confidence.** The confidence score comes from retrieval, not from the LLM's opinion of itself. The embeddings are unit-length and FAISS returns squared L2 distance *d²*, so each chunk's cosine similarity is *1 − d²/2*. Confidence is the mean over the retrieved chunks.
+- **Provider switch (Groq or LM Studio).** Both speak the OpenAI chat-completions format, so `LLM_PROVIDER` switches between hosted Groq and a fully local LM Studio. Missing keys, retired models and rate limits come back as clear messages instead of crashes.
+- **bcrypt + JWT authentication.** Passwords are hashed with bcrypt. Older SHA-256 hashes are upgraded on the next login. Logins return HS256 JWTs carrying the user's role, signed with a secret from the environment, and logout revokes the token through a blacklist.
+- **fastembed (ONNX) instead of PyTorch.** `all-MiniLM-L6-v2` runs on ONNX Runtime and produces the same vectors without the PyTorch stack. The image shrank from 2.66 GB to 1.15 GB, and the API peaks at about 220 MiB of RAM, comfortably inside Render's 512 MB free tier.
 
 ---
 
 ## How it works
 
-1. **Ingestion (offline / at Docker build).** `ingest_documents.py` loads the PDFs in `data/<role>/` and splits them into 600-character chunks with 150 characters of overlap. It embeds the chunks with `all-MiniLM-L6-v2` via fastembed and saves one FAISS index per role, plus a combined index for admins.
+1. **Ingestion (offline, or at Docker build).** `ingest_documents.py` loads the PDFs in `data/<role>/` and splits them into 600-character chunks with 150 characters of overlap. It embeds the chunks with `all-MiniLM-L6-v2` via fastembed (ONNX) and saves one FAISS index per role, plus a combined index for admins.
 2. **Login.** The user signs in with a username, password and role. The backend checks the bcrypt hash in SQLite and returns a JWT that carries the user's `role`.
 3. **Retrieval.** On `POST /ask`, the backend reads the role from the token. It embeds the question with the same fastembed model and searches that role's FAISS index for the top 3 chunks, with their distances.
-4. **Confidence.** The embeddings are unit-length and FAISS returns squared L2 distance *d²*. So each chunk's cosine similarity is *1 − d²/2*. The answer's confidence is the mean over the retrieved chunks.
-5. **Generation.** The chunks are placed in a strict "context-only" prompt and sent to the configured LLM provider: Groq or LM Studio, at temperature 0.1 with a 500-token limit. For gpt-oss reasoning models, `reasoning_effort` is set to `low`.
+4. **Confidence.** Each chunk's distance is converted to a cosine similarity, and the answer's confidence is their mean.
+5. **Generation.** The chunks are placed in a strict "context-only" prompt and sent to the configured LLM provider at temperature 0.1 with a 500-token limit. For gpt-oss reasoning models, `reasoning_effort` is set to `low`.
 6. **Response.** The API returns the answer with its sources, confidence and timings. It logs the exchange to SQLite and returns a `query_id` that the UI uses for feedback.
 
 ### Architecture
@@ -65,7 +67,7 @@ flowchart LR
         API["REST API<br/>app.py"]
         AUTH["JWT auth + RBAC<br/>auth.py · bcrypt"]
         RAG["RAG engine<br/>rag_engine.py"]
-        EMB["fastembed (ONNX Runtime)<br/>all-MiniLM-L6-v2"]
+        EMB["fastembed (ONNX)<br/>all-MiniLM-L6-v2"]
     end
 
     subgraph Stores["Role-scoped FAISS vectorstores"]
@@ -120,7 +122,7 @@ sequenceDiagram
         A-->>U: 401 Unauthorized
     end
     A->>R: ask_question_with_role(question, role)
-    R->>F: embed question (fastembed), similarity_search_with_score(k = 3) on vectorstore/{role}
+    R->>F: Embed question with fastembed (ONNX), similarity_search_with_score(k = 3) on vectorstore/{role}
     F-->>R: 3 chunks + squared L2 distances
     R->>R: confidence = mean(1 − d²/2), build strict context-only prompt
     R->>L: POST /chat/completions (temperature 0.1, max_tokens 500)
@@ -155,7 +157,7 @@ flowchart LR
 
     LOAD["PyPDFLoader<br/>one Document per page"]
     SPLIT["RecursiveCharacterTextSplitter<br/>chunk 600 · overlap 150"]
-    EMBED["fastembed · all-MiniLM-L6-v2<br/>unit-length embeddings"]
+    EMBED["fastembed (ONNX)<br/>all-MiniLM-L6-v2<br/>unit-length embeddings"]
 
     DE & DH & DM --> LOAD --> SPLIT --> EMBED
     EMBED -->|"per-role pass"| VE[("vectorstore/employee")]
@@ -173,12 +175,12 @@ flowchart LR
 | Frontend | React 19, Vite 8, Tailwind CSS 3, React Router 7, Zustand, Axios, Recharts, react-hot-toast |
 | Backend | FastAPI, Uvicorn, Pydantic, python-dotenv |
 | RAG pipeline | LangChain (`langchain-community`, `langchain-text-splitters`), PyPDFLoader / pypdf |
-| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` via fastembed (ONNX Runtime, no PyTorch) |
+| Embeddings | `all-MiniLM-L6-v2` via fastembed (ONNX Runtime) |
 | Vector store | FAISS (`faiss-cpu`), one index per role plus a combined index |
 | LLM | Groq (`openai/gpt-oss-20b` by default) or LM Studio (local, e.g. Mistral-7B-Instruct) |
 | Auth | PyJWT (HS256), passlib + bcrypt, SQLite token blacklist |
 | Storage | SQLite (users, chat history, query logs, feedback) |
-| Hosting | Render (Docker web service) for the API, Vercel for the frontend |
+| Hosting | Vercel (frontend), Render free tier (Docker backend), Groq (LLM) |
 
 ---
 
@@ -233,7 +235,7 @@ enterprise-rag-assistant/
 │   └── .env.example
 ├── data/                    # Policy documents, one folder per role
 ├── vectorstore/             # Generated by ingest_documents.py (git-ignored)
-├── docs/                    # Detailed guides + screenshots/
+├── docs/                    # Detailed guides (API, workflow, testing, roadmap)
 ├── Dockerfile               # Backend image for Render (listens on $PORT, default 10000)
 ├── render.yaml              # Render Blueprint: free Docker web service
 ├── .dockerignore
@@ -318,7 +320,7 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** and sign in with a [demo login](#demo-logins). The frontend talks to `http://127.0.0.1:8000` by default. To point it elsewhere, copy `.env.example` to `.env` and set `VITE_API_URL`.
+Open **http://localhost:5173** and sign in with one of the [demo accounts](#try-it-now). The frontend talks to `http://127.0.0.1:8000` by default. To point it elsewhere, copy `.env.example` to `.env` and set `VITE_API_URL`.
 
 ### Optional: run the production image locally
 
@@ -365,28 +367,31 @@ Retrieval and generation settings (`RETRIEVAL_K = 3`, `TEMPERATURE = 0.1`, `MAX_
 
 ## Deployment
 
-The API runs as a **Render** free web service (Docker) and the React app on **Vercel**. The API calls **Groq** for generation.
+The React frontend runs on **Vercel**, the FastAPI backend on **Render's free tier** (Docker), and answers are generated by **Groq**.
 
 ```mermaid
 flowchart LR
     B["Browser"]
-    subgraph Vercel
-        FE["React SPA<br/>static build of frontend-react/"]
+
+    subgraph Vercel["Vercel (frontend)"]
+        FE["React SPA<br/>Vite static build"]
     end
-    subgraph Render["Render free web service (Docker, $PORT = 10000)"]
-        API["FastAPI + Uvicorn"]
+
+    subgraph Render["Render (FastAPI, free tier)"]
+        API["FastAPI + Uvicorn<br/>Docker, 512 MB"]
         IDX[("FAISS indexes<br/>built into the image")]
-        EMB["fastembed model<br/>cached in the image"]
+        EMB["fastembed (ONNX) model<br/>cached in the image"]
         SQL[("SQLite<br/>seeded on startup")]
     end
+
     GROQ["Groq API<br/>openai/gpt-oss-20b"]
 
-    B -->|"loads app"| FE
-    B -->|"HTTPS API calls + JWT<br/>(VITE_API_URL)"| API
+    B -->|"loads the app"| FE
+    FE -->|"HTTPS API calls + JWT<br/>VITE_API_URL"| API
     API --- IDX
     API --- EMB
     API --- SQL
-    API -->|"chat completions<br/>(GROQ_API_KEY)"| GROQ
+    API -->|"chat completions<br/>GROQ_API_KEY"| GROQ
 ```
 
 ### 1. Backend → Render
@@ -395,7 +400,7 @@ flowchart LR
 2. When prompted, fill in the values marked `sync: false`:
    - `GROQ_API_KEY`: your Groq key
    - `JWT_SECRET`: a long random string, e.g. `python -c "import secrets; print(secrets.token_urlsafe(48))"`
-   - `CORS_ORIGINS`: your Vercel URL, e.g. `https://your-app.vercel.app`. If you don't know it yet, use `http://localhost:5173` for now and update it in step 2.5.
+   - `CORS_ORIGINS`: your Vercel URL, e.g. `https://enterprise-rag-assistant-silk.vercel.app`
 
    `LLM_MODEL` is preset to `openai/gpt-oss-20b`.
 3. Click **Apply**. The first build takes several minutes: it installs dependencies, downloads the embedding model and builds the FAISS indexes into the image.
@@ -409,23 +414,20 @@ Prefer not to use a Blueprint? Create **New → Web Service** from the repo with
 2. Set **Root Directory** to `frontend-react`. Vercel detects Vite, so the build command `npm run build` and output folder `dist` are set automatically.
 3. Add the environment variable `VITE_API_URL=https://<your-service>.onrender.com` (no trailing slash).
 4. Deploy. `vercel.json` rewrites all routes to `index.html`, so `/login` works on refresh.
-5. In Render, open the service's **Environment** tab and set `CORS_ORIGINS` to your Vercel URL. Saving redeploys the service.
+5. If the Vercel URL differs from `CORS_ORIGINS`, update it in Render's **Environment** tab. Saving redeploys the service.
 
-### Good to know
+Pushing to `main` redeploys both the backend (`autoDeploy: true`) and the frontend.
 
-- **Resource use (measured locally with `docker run --memory=512m`):**
-  - **Memory:** about 220 MiB at peak while serving all four roles, including concurrent requests.
-  - **Image size:** about 1.15 GB.
-  - **Startup:** about 4 s on a normal CPU and about 40–45 s when throttled to Render's 0.1 CPU.
-- **Cold starts:** free services spin down after 15 minutes without traffic. The frontend pings `/health` on load and shows *"Waking up the server, this can take up to a minute"* until the API answers.
-- **Ephemeral storage:** Render's free plan has no persistent disk. The SQLite database resets on every deploy, restart and spin-down. Demo users are re-seeded automatically; chat history and analytics start fresh.
-- **Updating:** pushing to `main` redeploys the backend (`autoDeploy: true`) and the frontend.
+## Deployment notes
+
+- **Cold starts.** The free Render service sleeps after about 15 minutes of inactivity. The first request after that can take around a minute; the frontend shows *"Waking up the server, this can take up to a minute"* until the API answers.
+- **Data resets.** Render's free tier has no persistent disk, so chat history and analytics reset whenever the service restarts. The demo users are re-created automatically on startup.
 
 ---
 
 ## API overview
 
-All endpoints except `/`, `/health` and `/login` require `Authorization: Bearer <token>`. Full request and response examples are in [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md).
+All endpoints except `/`, `/health` and `/login` require `Authorization: Bearer <token>`. Try them in the [live API docs](https://enterprise-rag-assistant-d172.onrender.com/docs); full request and response examples are in [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md).
 
 | Method | Endpoint | Access | Description |
 |---|---|---|---|
@@ -453,7 +455,7 @@ All endpoints except `/`, `/health` and `/login` require `Authorization: Bearer 
 **Example**
 
 ```bash
-API=http://127.0.0.1:8000
+API=https://enterprise-rag-assistant-d172.onrender.com   # or http://127.0.0.1:8000 locally
 TOKEN=$(curl -s -X POST $API/login \
   -H "Content-Type: application/json" \
   -d '{"username":"john","password":"password123","role":"employee"}' | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
@@ -465,21 +467,6 @@ curl -s -X POST $API/ask \
 
 ---
 
-## Demo logins
-
-These accounts are seeded into SQLite on startup. Select the matching role on the login screen; a role mismatch is rejected.
-
-| Username | Password | Role |
-|---|---|---|
-| `john` | `password123` | employee |
-| `alice` | `password123` | hr |
-| `bob` | `password123` | manager |
-| `admin` | `admin123` | admin |
-
-> These are public demo credentials. Don't store anything sensitive in the demo deployment.
-
----
-
 ## Roadmap
 
 | Item | Why |
@@ -487,7 +474,7 @@ These accounts are seeded into SQLite on startup. Select the matching role on th
 | Use `/ask-stream` in the React UI | The streaming endpoint works with both providers, but the UI currently calls `/ask` |
 | Ingest `.docx` files | `payroll-policy.docx` is listed for HR but not yet searchable |
 | Authenticate document downloads | The `/documents` static mount is not protected by JWT |
-| Persistent storage for the hosted demo | SQLite on Render's free plan resets on every restart; a managed database would keep history |
+| Persistent storage for the hosted demo | SQLite on Render's free tier resets on every restart; a managed database would keep history |
 | Skip the LLM call for very low-similarity questions | The confidence score already detects off-topic questions; skipping the call would save tokens |
 | Admin user-management screen | The `/admin/*` endpoints exist but have no UI yet |
 | Automated test suite (pytest + CI) | Testing is currently manual; see [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) |
@@ -504,19 +491,14 @@ These accounts are seeded into SQLite on startup. Select the matching role on th
 | [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) | Manual test checklist and cURL examples |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Original phased implementation plan |
 
-> These guides were written during earlier development phases, when the project used LM Studio and sentence-transformers. Where they disagree with this README, the README matches the current code.
-
----
-
-## Team
-
-| | Contributor |
-|---|---|
-| <img src="https://github.com/GOPIKA-BTECH23.png" width="48" alt="GOPIKA-BTECH23"> | **[@GOPIKA-BTECH23](https://github.com/GOPIKA-BTECH23)** |
-| <img src="https://github.com/srushtidayanand.png" width="48" alt="srushtidayanand"> | **[@srushtidayanand](https://github.com/srushtidayanand)** |
+> These guides were written during earlier development phases. Where they disagree with this README, the README matches the current code.
 
 ---
 
 ## License
 
 Released under the [MIT License](LICENSE).
+
+## Author
+
+**[@GOPIKA-BTECH23](https://github.com/GOPIKA-BTECH23)**

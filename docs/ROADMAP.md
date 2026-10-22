@@ -542,10 +542,8 @@ def get_role_specific_retriever(role: str):
     """Load vector store specific to user role"""
     vectorstore_path = f"../vectorstore/{role}"
     
-    from langchain_huggingface import HuggingFaceEmbeddings
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    from embeddings import get_embeddings  # fastembed all-MiniLM-L6-v2 (ONNX)
+    embeddings = get_embeddings()
     
     vector_db = FAISS.load_local(
         vectorstore_path,
@@ -682,7 +680,7 @@ def ask_question(question: str, role: str = "employee"):
 Level 1: Core RAG System
 ├─ ✅ Document Loading (PyPDFLoader)
 ├─ ✅ Text Chunking (RecursiveCharacterTextSplitter)
-├─ ✅ Embeddings (Sentence Transformers - MiniLM)
+├─ ✅ Embeddings (fastembed / ONNX - MiniLM)
 ├─ ✅ Vector Database (FAISS)
 ├─ ✅ Semantic Retrieval (Top-K)
 ├─ ✅ LLM Integration (Mistral 7B via LM Studio)
@@ -751,13 +749,13 @@ Level 4: Advanced Features
 
 ### External Services
 - **LM Studio** - Local LLM inference (Required)
-- **HuggingFace Hub** - Download embeddings (One-time)
+- **Hugging Face Hub** - One-time download of the ONNX embedding model (via fastembed)
 
 ### Python Libraries
 - `fastapi` - Web framework
 - `langchain` - RAG framework
 - `faiss-cpu/gpu` - Vector search
-- `sentence-transformers` - Embeddings
+- `fastembed` - Embeddings (ONNX Runtime, no PyTorch)
 - `requests` - HTTP calls
 - `pydantic` - Data validation
 - `python-jose` - JWT tokens (Phase 3)
